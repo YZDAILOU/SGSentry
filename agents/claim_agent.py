@@ -80,54 +80,43 @@ class FactCheckerDeps:
 # --- Agent Initialization ---
 
 model_instance = GoogleModel('gemini-2.5-flash')
+# --- LangFuse Initialization ---
 
+langfuse_client = Langfuse(
+    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+    host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+)
+
+print("Langfuse: ", langfuse_client)
+# 1. Fetch the prompt from Langfuse
+try:
+    # This retrieves the versioned prompt you created in the UI
+    langfuse_prompt = langfuse_client.get_prompt("default_system")
+    # Extract the actual text string from the Langfuse object
+    system_instructions = langfuse_prompt.get_langchain_prompt() 
+except Exception as e:
+    # Fallback in case Langfuse is unreachable
+    system_instructions = "You are a factual analysis agent. Extract and verify claims."
+
+# 2. Pass it into the Agent
 claim_agent = Agent(
     model_instance,
     deps_type=FactCheckerDeps,
-    output_type=AnalysisResult
+    output_type=AnalysisResult,
+    system_prompt=system_instructions 
 )
-
-# --- Agent Tools ---
-# OpenAI GPT-4o is used here for its advanced reasoning capabilities, which are crucial for the logic auditing step.
-@claim_agent.tool
-async def logic_auditor(ctx: RunContext[FactCheckerDeps], claim: str, google_evidence: str, policy_evidence: str) -> str:
-    """
-    Advanced Logic Auditor: Use this to find logical fallacies, 
-    hidden biases, or direct contradictions between a claim and the evidence found (Google vs Policy).
-    Powered by GPT-4o for high-precision reasoning.
-    """
-    try:
-        prompt_tmpl = langfuse.get_prompt("logic_cross_examiner")
-        prompt = prompt_tmpl.compile(
-            claim=claim, 
-            google_evidence=google_evidence, 
-            policy_evidence=policy_evidence
-        )
-    except Exception as e:
-        # print(f"⚠️ Langfuse Prompt Error: {e}")
-        prompt = f"""
-        You are a logic auditor. You are presented with a claim: '{claim}'.
-        Source A (Google): {google_evidence}
-        Source B (SG Policy): {policy_evidence}
-        Perform a 'Blind Logical Audit':
-        Identify any 'False Dilemma' or 'Strawman' fallacies.
-        Resolve the conflict by identifying which source has the higher 'domain specificity'.
-        """
-    
-    # Using GPT-4o (or gpt-5.2 if you have the 2026 upgrade)
-    response = ctx.deps.openai_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    # print("Logic Auditor Response:", response.choices[0].message.content)
-    
-    return response.choices[0].message.content
 
 #Google Fact Check API tool to verify claims against existing fact checks. This provides a quick check for widely debunked or verified claims, and the logic auditor can then analyze any discrepancies in depth.
 @claim_agent.tool
 async def check_google_facts(ctx: RunContext[FactCheckerDeps], query: str) -> str:
-    """Search Google Fact Check API for a specific claim."""
+    """
+    CRITICAL TOOL: Search the Google Fact Check API to find existing fact-checks for a claim.
+    Use this for EVERY factual claim you extract.
+    Input: The complete claim text (e.g., 'Singapore's birth rate is below 1.0')
+    Returns: Publisher ratings (Debunked/Verified/Mixed) from credible fact-checking organizations.
+    This is your primary verification source for global facts.
+    """
     results = await ctx.deps.google.search(query)
     if not results:
         return "No existing fact checks found."
@@ -138,14 +127,22 @@ async def check_google_facts(ctx: RunContext[FactCheckerDeps], query: str) -> st
         publisher = review.get("publisher", {}).get("name", "Unknown")
         rating = review.get("textualRating", "Unknown")
         summary.append(f"{publisher} rated it '{rating}'")
-    return "; ".join(summary)
+    print("Finished google fact")
+    return "google fact; ".join(summary)
 
 #PageRank tool to evaluate the credibility of sources mentioned in claims. This can help the logic auditor weigh evidence based on source reliability.
 @claim_agent.tool
 async def check_domain_authority(ctx: RunContext[FactCheckerDeps], domain: str) -> str:
-    """Check PageRank scoring if a website is mentioned."""
+    """
+    CREDIBILITY TOOL: Evaluate the authority and trustworthiness of a domain using PageRank scoring.
+    Use this whenever a claim references a specific website (e.g., 'according to straitstimes.com').
+    Input: Domain name (e.g., 'straitstimes.com')
+    Returns: PageRank decimal score and ranking position. Higher scores = more authoritative sources.
+    This helps you weight evidence based on source reliability.
+    """
     # Ensure get_pagerank exists in your PageRankAPI class
     data = await ctx.deps.pagerank.get_pagerank(domain)
+    print("Finished pagerank")
     return f"Domain: {domain}, PageRank: {data.get('page_rank_decimal')}, Rank: {data.get('rank')}"
 
 # The consult_policies tool is enhanced to perform a semantic vector search against the ClickHouse database of Singapore government policies. This allows the agent to retrieve highly relevant policy excerpts that can be used as authoritative evidence when verifying claims related to Singapore regulations. The logic auditor can then analyze how well the claim aligns with official policies, especially in cases where Google Fact Check results are inconclusive or conflicting.
@@ -182,6 +179,7 @@ async def consult_policies(ctx: RunContext[FactCheckerDeps], query: str) -> str:
         content, source, score = row
         context_blocks.append(f"Source: {source} (Similarity: {1-score:.2f})\nContent: {content}")
 
+    print("Finished policy consultation")
     return "\n\n---\n\n".join(context_blocks)
 
 # --- Video Analysis Logic ---

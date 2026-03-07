@@ -270,30 +270,15 @@ async def analyze_media(
         # 3. Analyze Media for Deepfakes (Gemini) and Analyze Claims (Agent Loop)
         media_analysis = await analyze_media_integrity(file_path)
         
+         # 4. Analyze Claims (Agent Loop)
         deps = FactCheckerDeps()
-        
-        try:
-            # Get the prompt template from Langfuse UI
-            langfuse_prompt = langfuse_client.get_prompt("default_system")
-            
-            # This injects the transcript into your {{transcript}} tag in Langfuse
-            # If your Langfuse prompt doesn't have {{transcript}}, it will fail
-            instruction = langfuse_prompt.compile(transcript=transcript)
-            
-            # Safety Check: Ensure the transcript is actually in the prompt.
-            # If the Langfuse template was just "You are a bot", the model won't see the data.
-            if transcript and transcript not in instruction:
-                instruction += f"\n\nTRANSCRIPT:\n{transcript}"
-        except Exception as e:
-            # print(f"⚠️ Langfuse Fetch Failed: {e}")
-            instruction = f"Analyze this content for factual claims: {transcript}"
-
         result = await claim_agent.run(
-            instruction,
+            f"Analyze this transcript: {transcript}",
             deps=deps
         )
         analysis_data = result.output or AnalysisResult(summary="No claims found", claims=[], hallucination_risk="Low")
 
+        print("SUmmary from google facts: ", analysis_data.summary)
         # 5. Score
         score = calculate_trust_score(analysis_data, media_analysis)
         metrics = generate_hex_metrics(analysis_data, media_analysis)
