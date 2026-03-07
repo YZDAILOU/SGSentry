@@ -8,7 +8,7 @@ from google import genai
 from dotenv import load_dotenv
 from pydantic_ai.models.google import GoogleModel
 import clickhouse_connect
-
+from openai import OpenAI
 
 # Import Tools
 from tools.pagerank_api import PageRankAPI
@@ -48,6 +48,8 @@ class FactCheckerDeps:
         self.google = GoogleFactCheckAPI()
         # self.policy_text = self._load_policy_pdf()
         self.client = genai.Client(api_key=api_key)
+        # Initialize OpenAI Client for Logic Auditing
+        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         # Initialize ClickHouse connection
         self.ch_client = clickhouse_connect.get_client(
             host=os.getenv('CH_HOST', 'localhost'),
@@ -78,16 +80,17 @@ class FactCheckerDeps:
 model_instance = GoogleModel('gemini-2.5-flash')
 
 claim_agent = Agent(
-    model_instance,  # Pass model instance directly
+    model_instance,
     deps_type=FactCheckerDeps,
     output_type=AnalysisResult,
     system_prompt=(
-        "You are a Fact Checking Bot for Singapore context. "
-        "1. Analyze the transcript. "
-        "2. Extract key claims. "
-        "3. Use tools to verify claims against Google Fact Check and PageRank for domain authority. "
-        "4. Check the provided 'consult_policies' tool for local context. "
-        "5. Return a structured report."
+        "You are a Fact Checking Bot for Singapore context. Your task is to verify the integrity of claims extracted from media content. "
+        "1. Analyze the transcript and extract key claims. "
+        "2. Use 'check_google_facts' and 'consult_policies' for raw evidence. "
+        "3. CRITICAL: Use the 'logic_auditor' tool to cross-examine evidence. " # New instruction
+        "If Google Facts and SG Policies seem to conflict, ask the logic_auditor "
+        "to perform a 'blind' logical analysis of the claim."
+        "4. Return a structured report."
     )
 )
 
@@ -96,23 +99,23 @@ claim_agent = Agent(
 @claim_agent.tool
 async def logic_auditor(ctx: RunContext[FactCheckerDeps], claim: str, evidence: str) -> str:
     """
-    Advanced Logic Auditor: Use this to find logical fallacies,
+    Advanced Logic Auditor: Use this to find logical fallacies, 
     hidden biases, or direct contradictions between a claim and the evidence found.
     Powered by GPT-4o for high-precision reasoning.
     """
     prompt = f"""
-    You are a Senior Forensic Analyst.
+    You are a Senior Forensic Analyst. 
     Analyze the following claim against the provided evidence.
-
+    
     CLAIM: {claim}
     EVIDENCE: {evidence}
-
+    
     Identify:
     1. Direct Contradictions: (Yes/No)
     2. Logical Fallacies: (e.g. Strawman, Cherry-picking, Appeal to Emotion)
     3. Final Reasoning: A 2-sentence verdict on the claim's integrity.
     """
-
+    
     # Using GPT-4o (or gpt-5.2 if you have the 2026 upgrade)
     response = ctx.deps.openai_client.chat.completions.create(
         model="gpt-4o",
@@ -120,7 +123,7 @@ async def logic_auditor(ctx: RunContext[FactCheckerDeps], claim: str, evidence: 
     )
 
     print("Logic Auditor Response:", response.choices[0].message.content)
-
+    
     return response.choices[0].message.content
 
 #Google Fact Check API tool to verify claims against existing fact checks. This provides a quick check for widely debunked or verified claims, and the logic auditor can then analyze any discrepancies in depth.
@@ -139,6 +142,7 @@ async def check_google_facts(ctx: RunContext[FactCheckerDeps], query: str) -> st
         summary.append(f"{publisher} rated it '{rating}'")
     return "; ".join(summary)
 
+#PageRank tool to evaluate the credibility of sources mentioned in claims. This can help the logic auditor weigh evidence based on source reliability.
 @claim_agent.tool
 async def check_domain_authority(ctx: RunContext[FactCheckerDeps], domain: str) -> str:
     """Check PageRank scoring if a website is mentioned."""
@@ -146,6 +150,7 @@ async def check_domain_authority(ctx: RunContext[FactCheckerDeps], domain: str) 
     data = await ctx.deps.pagerank.get_pagerank(domain)
     return f"Domain: {domain}, PageRank: {data.get('page_rank_decimal')}, Rank: {data.get('rank')}"
 
+# The consult_policies tool is enhanced to perform a semantic vector search against the ClickHouse database of Singapore government policies. This allows the agent to retrieve highly relevant policy excerpts that can be used as authoritative evidence when verifying claims related to Singapore regulations. The logic auditor can then analyze how well the claim aligns with official policies, especially in cases where Google Fact Check results are inconclusive or conflicting.
 @claim_agent.tool
 async def consult_policies(ctx: RunContext[FactCheckerDeps], query: str) -> str:
     """
@@ -233,22 +238,19 @@ async def extract_image_text(image_path: str) -> str:
     return response.text
 
 async def extract_video_visual_claims(video_path: str) -> str:
-    """
-    Acts as a fallback: If audio is music-only, this 'watches'
-    the video to find text overlays and captions.
-    """
-    client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+    """Fallback tool that 'watches' the video when speech is missing."""
+    client = genai.Client(api_key=api_key)
     media_file = client.files.upload(file=video_path)
-
+    
     # Wait for processing (Gemini needs to index the frames)
     while media_file.state.name == "PROCESSING":
         time.sleep(2)
         media_file = client.files.get(name=media_file.name)
 
     prompt = (
-        "This video has no spoken dialogue. Analyze the visuals and extract any "
-        "factual assertions made through text overlays, subtitles, or signs. "
-        "If there is a visual anomaly (like a deepfake), describe it as a claim."
+        "This video has no spoken dialogue or only contains music. "
+        "Analyze the visuals: extract all text overlays, captions, "
+        "and describe the key factual events occurring in the scene."
     )
 
     response = client.models.generate_content(
