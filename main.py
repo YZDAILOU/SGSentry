@@ -8,6 +8,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pypdf import PdfReader  # Ensure you have 'pip install pypdf'
 from google import genai
+import yt_dlp
+import asyncio
 
 # Import our modules
 from agents.transcriber import AudioTranscriber
@@ -22,13 +24,13 @@ def log_status(claim_id, status, transcript, details):
     deps = FactCheckerDeps()
     # Explicitly naming columns prevents "Unrecognized column" or "Offset" errors
     query = """
-        INSERT INTO claim_history (claim_id, transcript, status, details) 
-        VALUES 
+        INSERT INTO claim_history (claim_id, transcript, status, details)
+        VALUES
     """
     try:
         deps.ch_client.insert(
-            'claim_history', 
-            [[claim_id, transcript, status, details]], 
+            'claim_history',
+            [[claim_id, transcript, status, details]],
             column_names=['claim_id', 'transcript', 'status', 'details']
         )
     except Exception as e:
@@ -68,14 +70,14 @@ def log_status(claim_id, status, transcript, details):
 #         if count == 0:
 #             print("📭 ClickHouse empty. Extracting sg_policies.pdf...")
 #             pdf_path = os.path.join("data", "sg_policies.pdf")
-            
+
 #             if os.path.exists(pdf_path):
 #                 reader = PdfReader(pdf_path)
 #                 for page in reader.pages:
 #                     print("policies extracted: " , page.extract_text())
-#                     client.insert('sg_policies', [[ 'sg_policies.pdf', page.extract_text() ]], 
+#                     client.insert('sg_policies', [[ 'sg_policies.pdf', page.extract_text() ]],
 #                              column_names=['filename', 'content'])
-                
+
 #                 print("✅ ClickHouse populated successfully.")
 #             else:
 #                 print("⚠️ Warning: data/sg_policies.pdf not found. Skipping population.")
@@ -117,12 +119,12 @@ def init_clickhouse():
         if count == 0:
             print("📭 ClickHouse empty. Starting Embedding Process...")
             pdf_path = os.path.join("data", "sg_policies.pdf")
-            
+
             if os.path.exists(pdf_path):
                 # Initialize Gemini Client for embeddings
                 # Assuming you are using the new google-genai SDK
                 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-                
+
                 reader = PdfReader(pdf_path)
                 data_to_insert = []
 
@@ -130,7 +132,7 @@ def init_clickhouse():
                     text = page.extract_text().strip()
                     if not text:
                         continue
-                    
+
                     print(f"Processing page {i+1}/{len(reader.pages)}...")
 
                     # Generate Embedding using Gemini
@@ -147,14 +149,14 @@ def init_clickhouse():
                 # 4. Batch Insert
                 if data_to_insert:
                     client.insert(
-                        'sg_policies', 
-                        data_to_insert, 
+                        'sg_policies',
+                        data_to_insert,
                         column_names=['filename', 'content', 'embedding']
                     )
                     print(f"✅ ClickHouse populated with {len(data_to_insert)} embedded pages.")
             else:
                 print("⚠️ Warning: data/sg_policies.pdf not found.")
-        
+
         else:
             print(f"✅ ClickHouse already contains {count} records. Skipping.")
 
@@ -199,7 +201,7 @@ async def read_root():
 async def analyze_media(file: UploadFile = File(...)):
     """Receives video/image, extracts text, checks claims, and analyzes for deepfakes."""
     file_path = f"temp_{file.filename}"
-    
+
     try:
         # 1. Save Uploaded File
         with open(file_path, "wb") as buffer:
@@ -208,12 +210,12 @@ async def analyze_media(file: UploadFile = File(...)):
         # 2. Extract Text (Transcript or OCR)
         content_type = file.content_type or ""
         transcript = ""
-        
+
         # 2. Extract Text (Transcript or OCR)
         if "video" in content_type:
             transcriber = AudioTranscriber()
             transcript = await transcriber.transcribe(file_path)
-            
+
             # NEW LOGIC: If the transcript is empty or says 'only music'
             if not transcript.strip() or "no spoken words" in transcript.lower():
                 print("🔈 Audio is silent/music. Switching to Visual Extraction...")
@@ -222,16 +224,17 @@ async def analyze_media(file: UploadFile = File(...)):
         elif "image" in content_type:
             transcript = await extract_image_text(file_path)
 
-        # 3. Analyze Media for Deepfakes (Gemini)
-        media_analysis = await analyze_media_integrity(file_path)
+        # 3. Analyze Media for Deepfakes (Gemini) and Analyze Claims (Agent Loop)
+        media_analysis = analyze_media_integrity(file_path)
 
-        # 4. Analyze Claims (Agent Loop)
         deps = FactCheckerDeps()
-        result = await claim_agent.run(
+        result = claim_agent.run(
             f"Analyze this transcript: {transcript}",
             deps=deps
         )
-        analysis_data = result.output
+        # Use gather to wait for both to finish at once
+        media_analysis, agent_result = await asyncio.gather(media_analysis, result)
+        analysis_data = agent_result.output or AnalysisResult(summary="No claims found", claims=[], hallucination_risk="Low")
 
         # 5. Score
         score = calculate_trust_score(analysis_data, media_analysis)
@@ -253,7 +256,7 @@ async def analyze_media(file: UploadFile = File(...)):
             "analysis": analysis_data.model_dump(),
             "video_analysis": media_analysis.model_dump()
         }
-        
+
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)

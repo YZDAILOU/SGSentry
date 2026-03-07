@@ -92,14 +92,45 @@ claim_agent = Agent(
 )
 
 # --- Agent Tools ---
+# OpenAI GPT-4o is used here for its advanced reasoning capabilities, which are crucial for the logic auditing step.
+@claim_agent.tool
+async def logic_auditor(ctx: RunContext[FactCheckerDeps], claim: str, evidence: str) -> str:
+    """
+    Advanced Logic Auditor: Use this to find logical fallacies,
+    hidden biases, or direct contradictions between a claim and the evidence found.
+    Powered by GPT-4o for high-precision reasoning.
+    """
+    prompt = f"""
+    You are a Senior Forensic Analyst.
+    Analyze the following claim against the provided evidence.
 
+    CLAIM: {claim}
+    EVIDENCE: {evidence}
+
+    Identify:
+    1. Direct Contradictions: (Yes/No)
+    2. Logical Fallacies: (e.g. Strawman, Cherry-picking, Appeal to Emotion)
+    3. Final Reasoning: A 2-sentence verdict on the claim's integrity.
+    """
+
+    # Using GPT-4o (or gpt-5.2 if you have the 2026 upgrade)
+    response = ctx.deps.openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    print("Logic Auditor Response:", response.choices[0].message.content)
+
+    return response.choices[0].message.content
+
+#Google Fact Check API tool to verify claims against existing fact checks. This provides a quick check for widely debunked or verified claims, and the logic auditor can then analyze any discrepancies in depth.
 @claim_agent.tool
 async def check_google_facts(ctx: RunContext[FactCheckerDeps], query: str) -> str:
     """Search Google Fact Check API for a specific claim."""
     results = await ctx.deps.google.search(query)
     if not results:
         return "No existing fact checks found."
-    
+
     summary = []
     for claim in results[:2]: # Limit to top 2
         review = claim.get("claimReview", [{}])[0]
@@ -118,7 +149,7 @@ async def check_domain_authority(ctx: RunContext[FactCheckerDeps], domain: str) 
 @claim_agent.tool
 async def consult_policies(ctx: RunContext[FactCheckerDeps], query: str) -> str:
     """
-    Search across all Singapore government policy documents in ClickHouse 
+    Search across all Singapore government policy documents in ClickHouse
     to verify claims against official regulations.
     """
     # 1. Generate the embedding for the user's specific question
@@ -136,9 +167,9 @@ async def consult_policies(ctx: RunContext[FactCheckerDeps], query: str) -> str:
         ORDER BY score ASC
         LIMIT 5
     """
-    
+
     result = ctx.deps.ch_client.query(search_query, parameters={'vec': query_vector})
-    
+
     if not result.result_rows:
         return "No relevant policy information found in the database."
 
@@ -156,23 +187,23 @@ async def analyze_media_integrity(media_path: str) -> VideoAnalysisResult:
     """Uploads video/image to Gemini to check for AI generation/deepfakes."""
     if not api_key:
         raise ValueError("GOOGLE_API_KEY is not set.")
-        
+
     # Using the latest genai client
     client = genai.Client(api_key=api_key)
-    
+
     print(f"Uploading {media_path} for AI detection...")
     media_file = client.files.upload(file=media_path)
-    
+
     # Wait for processing
     while media_file.state.name == "PROCESSING":
         time.sleep(2)
         media_file = client.files.get(name=media_file.name)
-        
+
     if media_file.state.name == "FAILED":
         raise RuntimeError("Media processing failed.")
-        
+
     prompt = "Analyze this media (video or image) for signs of AI generation (deepfakes, manipulation), such as unnatural artifacts, lighting inconsistencies, or lip-sync errors. Return JSON."
-    
+
     # Note: Use 'gemini-2.5-pro' for better video analysis
     response = client.models.generate_content(
         model="gemini-2.5-flash",
@@ -182,19 +213,19 @@ async def analyze_media_integrity(media_path: str) -> VideoAnalysisResult:
             "response_schema": VideoAnalysisResult
         }
     )
-    
+
     return VideoAnalysisResult.model_validate_json(response.text)
 
 async def extract_image_text(image_path: str) -> str:
     """Extracts text from an image using Gemini."""
     if not api_key: return ""
     client = genai.Client(api_key=api_key)
-    
+
     img_file = client.files.upload(file=image_path)
     while img_file.state.name == "PROCESSING":
         time.sleep(1)
         img_file = client.files.get(name=img_file.name)
-        
+
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=[img_file, "Extract all readable text from this image. If no text, describe the image content in detail."],
@@ -203,23 +234,23 @@ async def extract_image_text(image_path: str) -> str:
 
 async def extract_video_visual_claims(video_path: str) -> str:
     """
-    Acts as a fallback: If audio is music-only, this 'watches' 
+    Acts as a fallback: If audio is music-only, this 'watches'
     the video to find text overlays and captions.
     """
     client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
     media_file = client.files.upload(file=video_path)
-    
-    # Wait for processing
+
+    # Wait for processing (Gemini needs to index the frames)
     while media_file.state.name == "PROCESSING":
         time.sleep(2)
         media_file = client.files.get(name=media_file.name)
-    
+
     prompt = (
         "This video has no spoken dialogue. Analyze the visuals and extract any "
         "factual assertions made through text overlays, subtitles, or signs. "
         "If there is a visual anomaly (like a deepfake), describe it as a claim."
     )
-    
+
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=[media_file, prompt]

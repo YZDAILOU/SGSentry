@@ -244,7 +244,8 @@
                 console.log("Server Response:", data);
                 // Update UI (Render Results)
                 document.getElementById('scoreValue').innerText = data.score;
-                document.getElementById('summaryText').innerText = data.analysis.summary;
+                document.getElementById('summaryText').innerText = data.analysis?.summary || "No summary available.";
+                document.getElementById('result').style.display = 'block';
 
                 renderChart(data.metrics);
 
@@ -266,7 +267,6 @@
                     claimsContainer.appendChild(div);
                 });
 
-                document.getElementById('result').style.display = 'block';
             } catch (error) {
                 alert("Error analyzing media: " + error);
             } finally {
@@ -277,7 +277,7 @@
 
         function renderChart(metrics) {
             const ctx = document.getElementById('radarChart').getContext('2d');
-            
+
             if (radarChart) {
                 radarChart.destroy();
             }

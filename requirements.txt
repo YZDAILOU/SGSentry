@@ -9,3 +9,4 @@ pydantic
 pypdf
 google-genai
 clickhouse-connect
+asyncio
