@@ -32,7 +32,7 @@ async def read_root():
 async def analyze_media(file: UploadFile = File(...)):
     """Receives video/image, extracts text, checks claims, and analyzes for deepfakes."""
     file_path = f"temp_{file.filename}"
-    
+
     try:
         # 1. Save Uploaded File
         with open(file_path, "wb") as buffer:
@@ -41,12 +41,36 @@ async def analyze_media(file: UploadFile = File(...)):
         # 2. Extract Text (Transcript or OCR)
         content_type = file.content_type or ""
         transcript = ""
-        
+
         if "video" in content_type:
             # Use Whisper for video audio
             transcriber = AudioTranscriber()
             transcript = await transcriber.transcribe(file_path)
-        
+        elif "image" in content_type:
+            # Use Gemini for Image OCR/Description
+            transcript = await extract_image_text(file_path)
+
+        # 3. Analyze Media for Deepfakes (Gemini)
+        media_analysis = await analyze_media_integrity(file_path)
+
+        # 4. Analyze Claims (Agent Loop)
+        deps = FactCheckerDeps()
+        result = await claim_agent.run(
+            f"Analyze this transcript: {transcript}",
+            deps=deps
+        )
+        analysis_data = result.output
+
+        # 5. Score
+        score = calculate_trust_score(analysis_data)
+
+        return {
+            "transcript": transcript,
+            "score": score,
+            "analysis": analysis_data.model_dump(),
+            "video_analysis": media_analysis.model_dump()
+        }
+
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
