@@ -202,22 +202,19 @@ async def extract_image_text(image_path: str) -> str:
     return response.text
 
 async def extract_video_visual_claims(video_path: str) -> str:
-    """
-    Acts as a fallback: If audio is music-only, this 'watches' 
-    the video to find text overlays and captions.
-    """
-    client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+    """Fallback tool that 'watches' the video when speech is missing."""
+    client = genai.Client(api_key=api_key)
     media_file = client.files.upload(file=video_path)
     
-    # Wait for processing
+    # Wait for processing (Gemini needs to index the frames)
     while media_file.state.name == "PROCESSING":
         time.sleep(2)
         media_file = client.files.get(name=media_file.name)
     
     prompt = (
-        "This video has no spoken dialogue. Analyze the visuals and extract any "
-        "factual assertions made through text overlays, subtitles, or signs. "
-        "If there is a visual anomaly (like a deepfake), describe it as a claim."
+        "This video has no spoken dialogue or only contains music. "
+        "Analyze the visuals: extract all text overlays, captions, "
+        "and describe the key factual events occurring in the scene."
     )
     
     response = client.models.generate_content(
