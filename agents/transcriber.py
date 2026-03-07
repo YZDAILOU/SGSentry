@@ -2,6 +2,7 @@ import os
 import time
 from google import genai
 from google.genai import types
+from langfuse import Langfuse
 
 class AudioTranscriber:
     def __init__(self):
@@ -12,6 +13,7 @@ class AudioTranscriber:
         
         self.client = genai.Client(api_key=api_key)
         self.model_id = "gemini-2.5-flash"
+        self.langfuse = Langfuse()
 
     async def transcribe(self, audio_path: str) -> str:
         """
@@ -41,10 +43,15 @@ class AudioTranscriber:
             print(f"Transcribing {audio_path} with {self.model_id}...")
             
             # Using a specific prompt to ensure verbatim Singapore-aware transcription
-            prompt = (
-                "Transcribe this audio verbatim. Keep the original sentence structure "
-                "and accurately capture Singaporean English (Singlish) terms, accents, and acronyms."
-            )
+            try:
+                prompt_tmpl = self.langfuse.get_prompt("singlish_transcription_refiner")
+                prompt = prompt_tmpl.compile(raw_audio_context="Audio file")
+            except Exception as e:
+                print(f"⚠️ Langfuse Prompt Error: {e}")
+                prompt = (
+                    "Transcribe this audio verbatim. Keep the original sentence structure "
+                    "and accurately capture Singaporean English (Singlish) terms, accents, and acronyms."
+                )
 
             response = self.client.models.generate_content(
                 model=self.model_id,

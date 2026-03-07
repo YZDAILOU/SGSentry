@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from pypdf import PdfReader  # Ensure you have 'pip install pypdf'
 from google import genai
 import yt_dlp
-
+from langfuse import Langfuse
 # Import our modules
 from agents.transcriber import AudioTranscriber
 from agents.claim_agent import claim_agent, FactCheckerDeps, analyze_media_integrity, extract_image_text, extract_video_visual_claims, AnalysisResult
@@ -21,6 +21,18 @@ from agents.scorer import calculate_trust_score, generate_hex_metrics
 load_dotenv()
 
 app = FastAPI()
+
+# Initialize Langfuse Client
+# --- LangFuse Initialization ---
+
+langfuse_client = Langfuse(
+    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+    host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+)
+
+if not os.getenv("LANGFUSE_PUBLIC_KEY"):
+    print("❌ ERROR: LANGFUSE_PUBLIC_KEY not found in environment!")
 
 class UrlRequest(BaseModel):
     media_url: str
@@ -259,8 +271,25 @@ async def analyze_media(
         media_analysis = analyze_media_integrity(file_path)
 
         deps = FactCheckerDeps()
-        result = claim_agent.run(
-            f"Analyze this transcript: {transcript}",
+        
+        try:
+            # Get the prompt template from Langfuse UI
+            langfuse_prompt = langfuse_client.get_prompt("default_system")
+            
+            # This injects the transcript into your {{transcript}} tag in Langfuse
+            # If your Langfuse prompt doesn't have {{transcript}}, it will fail
+            instruction = langfuse_prompt.compile(transcript=transcript)
+            
+            # Safety Check: Ensure the transcript is actually in the prompt.
+            # If the Langfuse template was just "You are a bot", the model won't see the data.
+            if transcript and transcript not in instruction:
+                instruction += f"\n\nTRANSCRIPT:\n{transcript}"
+        except Exception as e:
+            print(f"⚠️ Langfuse Fetch Failed: {e}")
+            instruction = f"Analyze this content for factual claims: {transcript}"
+
+        result = await claim_agent.run(
+            instruction,
             deps=deps
         )
         analysis_data = result.output or AnalysisResult(summary="No claims found", claims=[], hallucination_risk="Low")
