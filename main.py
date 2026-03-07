@@ -321,5 +321,7 @@ async def analyze_media(
 
 if __name__ == "__main__":
     import uvicorn
-    print("Starting Server at http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Railway provides the port via the PORT environment variable
+    port = int(os.getenv("PORT", 8000)) 
+    print(f"Starting Server at http://0.0.0.0:{port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
