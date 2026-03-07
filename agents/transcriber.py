@@ -22,7 +22,7 @@ class AudioTranscriber:
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        print(f"Uploading {audio_path} to Gemini File API...")
+        # print(f"Uploading {audio_path} to Gemini File API...")
 
         try:
             # 1. Upload the file to Google's File API
@@ -32,7 +32,7 @@ class AudioTranscriber:
             # 2. Wait for the file to be processed by Google (Status: ACTIVE)
             # This is usually instant for small files, but good for safety
             while uploaded_file.state.name == "PROCESSING":
-                print("Waiting for file to be processed...")
+                # print("Waiting for file to be processed...")
                 time.sleep(2)
                 uploaded_file = self.client.files.get(name=uploaded_file.name)
 
@@ -40,14 +40,14 @@ class AudioTranscriber:
                 raise ValueError(f"File processing failed: {uploaded_file.name}")
 
             # 3. Generate Transcription
-            print(f"Transcribing {audio_path} with {self.model_id}...")
+            # print(f"Transcribing {audio_path} with {self.model_id}...")
             
             # Using a specific prompt to ensure verbatim Singapore-aware transcription
             try:
                 prompt_tmpl = self.langfuse.get_prompt("singlish_transcription_refiner")
                 prompt = prompt_tmpl.compile(raw_audio_context="Audio file")
             except Exception as e:
-                print(f"⚠️ Langfuse Prompt Error: {e}")
+                # print(f"⚠️ Langfuse Prompt Error: {e}")
                 prompt = (
                     "Transcribe this audio verbatim. Keep the original sentence structure "
                     "and accurately capture Singaporean English (Singlish) terms, accents, and acronyms."

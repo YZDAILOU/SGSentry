@@ -260,7 +260,7 @@ async def analyze_media(
             
             # TRIGGER VISUAL ANALYSIS: If transcript is empty or music-only
             if not transcript.strip() or "music" in transcript.lower():
-                print("Detected music-only audio. Switching to visual analysis...")
+                # print("Detected music-only audio. Switching to visual analysis...")
                 # Use your new fallback tool
                 transcript = await extract_video_visual_claims(file_path)
 
@@ -268,8 +268,8 @@ async def analyze_media(
             transcript = await extract_image_text(file_path)
 
         # 3. Analyze Media for Deepfakes (Gemini) and Analyze Claims (Agent Loop)
-        media_analysis = analyze_media_integrity(file_path)
-
+        media_analysis = await analyze_media_integrity(file_path)
+        
         deps = FactCheckerDeps()
         
         try:
@@ -285,7 +285,7 @@ async def analyze_media(
             if transcript and transcript not in instruction:
                 instruction += f"\n\nTRANSCRIPT:\n{transcript}"
         except Exception as e:
-            print(f"⚠️ Langfuse Fetch Failed: {e}")
+            # print(f"⚠️ Langfuse Fetch Failed: {e}")
             instruction = f"Analyze this content for factual claims: {transcript}"
 
         result = await claim_agent.run(
