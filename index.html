@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FactChecker AI</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }
+        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; text-align: center; }
+        .upload-section { border: 2px dashed #ccc; padding: 40px; text-align: center; border-radius: 8px; margin-bottom: 20px; cursor: pointer; transition: border 0.3s; }
+        .upload-section:hover { border-color: #007bff; }
+        button { background-color: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; width: 100%; }
+        button:disabled { background-color: #ccc; }
+        #result { margin-top: 30px; display: none; }
+        .score-card { text-align: center; padding: 20px; background: #f8f9fa; border-radius: 8px; margin-bottom: 20px; }
+        .score-val { font-size: 48px; font-weight: bold; color: #007bff; }
+        .claim-card { border-left: 4px solid #ddd; padding: 15px; margin-bottom: 15px; background: #fff; border: 1px solid #eee; border-left-width: 4px; }
+        .claim-card.verified { border-left-color: #28a745; }
+        .claim-card.debunked { border-left-color: #dc3545; }
+        .claim-card.neutral { border-left-color: #ffc107; }
+        .loader { display: none; text-align: center; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🕵️ FactChecker AI</h1>
+        <p style="text-align: center; color: #666;">Upload a video or image to verify claims & check for AI generation.</p>
+        
+        <div class="upload-section" onclick="document.getElementById('mediaInput').click()">
+            <p>Click to select Video or Image (MP4, JPG, PNG)</p>
+            <input type="file" id="mediaInput" accept="video/*,image/*" style="display: none" onchange="updateFileName()">
+            <p id="fileName" style="font-weight: bold; color: #007bff;"></p>
+        </div>
+
+        <button onclick="analyzeMedia()" id="submitBtn">Analyze Media</button>
+
+        <div class="loader" id="loader">
+            <p>⏳ Analyzing Media & Verifying Claims... (This may take a minute)</p>
+        </div>
+
+        <div id="result">
+            <div class="score-card">
+                <div>Trust Score</div>
+                <div class="score-val" id="scoreValue">0/100</div>
+            </div>
+            <h3>Summary</h3>
+            <p id="summaryText"></p>
+            <h3>Claims Analysis</h3>
+            <div id="claimsList"></div>
+        </div>
+    </div>
+
+    <script>
+        function updateFileName() {
+            const input = document.getElementById('mediaInput');
+            if (input.files.length > 0) {
+                document.getElementById('fileName').innerText = input.files[0].name;
+            }
+        }
+
+        async function analyzeMedia() {
+            const input = document.getElementById('mediaInput');
+            if (input.files.length === 0) return alert("Please select a file first.");
+
+            const formData = new FormData();
+            formData.append("file", input.files[0]);
+
+            document.getElementById('loader').style.display = 'block';
+            document.getElementById('result').style.display = 'none';
+            document.getElementById('submitBtn').disabled = true;
+
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                
+                // Update UI
+                document.getElementById('scoreValue').innerText = data.score;
+                document.getElementById('summaryText').innerText = data.analysis.summary;
+                
+                const claimsContainer = document.getElementById('claimsList');
+                claimsContainer.innerHTML = '';
+
+                data.analysis.claims.forEach(claim => {
+                    let statusClass = 'neutral';
+                    // Simple heuristic for color coding
+                    if (claim.verification.some(v => v.status.includes('True') || v.status.includes('Verified'))) statusClass = 'verified';
+                    if (claim.verification.some(v => v.status.includes('False') || v.status.includes('Debunked'))) statusClass = 'debunked';
+
+                    const div = document.createElement('div');
+                    div.className = `claim-card ${statusClass}`;
+                    div.innerHTML = `<strong>Claim:</strong> ${claim.text}<br>
+                                     <small>Status: ${claim.verification.length > 0 ? claim.verification[0].details : 'Unverified'}</small>`;
+                    claimsContainer.appendChild(div);
+                });
+
+                document.getElementById('result').style.display = 'block';
+            } catch (error) {
+                alert("Error analyzing media: " + error);
+            } finally {
+                document.getElementById('loader').style.display = 'none';
+                document.getElementById('submitBtn').disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
