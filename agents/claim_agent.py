@@ -200,3 +200,28 @@ async def extract_image_text(image_path: str) -> str:
         contents=[img_file, "Extract all readable text from this image. If no text, describe the image content in detail."],
     )
     return response.text
+
+async def extract_video_visual_claims(video_path: str) -> str:
+    """
+    Acts as a fallback: If audio is music-only, this 'watches' 
+    the video to find text overlays and captions.
+    """
+    client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+    media_file = client.files.upload(file=video_path)
+    
+    # Wait for processing
+    while media_file.state.name == "PROCESSING":
+        time.sleep(2)
+        media_file = client.files.get(name=media_file.name)
+    
+    prompt = (
+        "This video has no spoken dialogue. Analyze the visuals and extract any "
+        "factual assertions made through text overlays, subtitles, or signs. "
+        "If there is a visual anomaly (like a deepfake), describe it as a claim."
+    )
+    
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[media_file, prompt]
+    )
+    return response.text
