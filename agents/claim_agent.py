@@ -104,7 +104,7 @@ async def logic_auditor(ctx: RunContext[FactCheckerDeps], claim: str, google_evi
             policy_evidence=policy_evidence
         )
     except Exception as e:
-        print(f"⚠️ Langfuse Prompt Error: {e}")
+        # print(f"⚠️ Langfuse Prompt Error: {e}")
         prompt = f"""
         You are a logic auditor. You are presented with a claim: '{claim}'.
         Source A (Google): {google_evidence}
@@ -120,7 +120,7 @@ async def logic_auditor(ctx: RunContext[FactCheckerDeps], claim: str, google_evi
         messages=[{"role": "user", "content": prompt}]
     )
 
-    print("Logic Auditor Response:", response.choices[0].message.content)
+    # print("Logic Auditor Response:", response.choices[0].message.content)
     
     return response.choices[0].message.content
 
@@ -194,7 +194,7 @@ async def analyze_media_integrity(media_path: str) -> VideoAnalysisResult:
     # Using the latest genai client
     client = genai.Client(api_key=api_key)
 
-    print(f"Uploading {media_path} for AI detection...")
+    # print(f"Uploading {media_path} for AI detection...")
     media_file = client.files.upload(file=media_path)
 
     # Wait for processing
@@ -211,7 +211,7 @@ async def analyze_media_integrity(media_path: str) -> VideoAnalysisResult:
         prompt_tmpl = langfuse.get_prompt("media_integrity_analyst")
         prompt = prompt_tmpl.compile(media_type=media_type)
     except Exception as e:
-        print(f"⚠️ Langfuse Prompt Error: {e}")
+        # print(f"⚠️ Langfuse Prompt Error: {e}")
         prompt = f"You are an AI forensics expert. Analyze this {media_type} for signs of manipulation. " \
                  "Check for unnatural skin textures, flickering, or temporal inconsistencies. " \
                  "Return a structured assessment of the likelihood that this media is synthetic."
@@ -258,7 +258,7 @@ async def extract_video_visual_claims(video_path: str) -> str:
         prompt_tmpl = langfuse.get_prompt("visual_claim_extractor")
         prompt = prompt_tmpl.compile(video_frames_description="the video content")
     except Exception as e:
-        print(f"⚠️ Langfuse Prompt Error: {e}")
+        # print(f"⚠️ Langfuse Prompt Error: {e}")
         prompt = (
             "The audio for this video is unavailable or contains only music. Your task is to 'watch' the visuals. "
             "Extract all text overlays (OCR). Identify factual assertions made via captions or infographics."
