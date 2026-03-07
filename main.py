@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Import our modules
 from agents.transcriber import AudioTranscriber
+from agents.claim_agent import claim_agent, FactCheckerDeps, analyze_media_integrity, extract_image_text
+from agents.scorer import calculate_trust_score
 
 load_dotenv()
 
