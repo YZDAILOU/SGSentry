@@ -1,36 +1,161 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FactChecker AI</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }
-        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; text-align: center; }
-        .upload-section { border: 2px dashed #ccc; padding: 40px; text-align: center; border-radius: 8px; margin-bottom: 20px; cursor: pointer; transition: border 0.3s; }
-        .upload-section:hover { border-color: #007bff; }
-        button { background-color: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; width: 100%; }
-        button:disabled { background-color: #ccc; }
-        #result { margin-top: 30px; display: none; }
-        .score-card { text-align: center; padding: 20px; background: #f8f9fa; border-radius: 8px; margin-bottom: 20px; }
-        .score-val { font-size: 48px; font-weight: bold; color: #007bff; }
-        .claim-card { border-left: 4px solid #ddd; padding: 15px; margin-bottom: 15px; background: #fff; border: 1px solid #eee; border-left-width: 4px; }
-        .claim-card.verified { border-left-color: #28a745; }
-        .claim-card.debunked { border-left-color: #dc3545; }
-        .claim-card.neutral { border-left-color: #ffc107; }
-        .loader { display: none; text-align: center; margin: 20px 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+
+        .upload-section {
+            border: 2px dashed #ccc;
+            padding: 40px;
+            text-align: center;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: border 0.3s;
+        }
+
+        .upload-section:hover {
+            border-color: #007bff;
+        }
+
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+        }
+
+        #result {
+            margin-top: 30px;
+            display: none;
+        }
+
+        .score-card {
+            text-align: center;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .score-val {
+            font-size: 48px;
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        .claim-card {
+            border-left: 4px solid #ddd;
+            padding: 15px;
+            margin-bottom: 15px;
+            background: #fff;
+            border: 1px solid #eee;
+            border-left-width: 4px;
+        }
+
+        .claim-card.verified {
+            border-left-color: #28a745;
+        }
+
+        .claim-card.debunked {
+            border-left-color: #dc3545;
+        }
+
+        .claim-card.neutral {
+            border-left-color: #ffc107;
+        }
+
+        .loader {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .input-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            background: #eee;
+            cursor: pointer;
+            border-radius: 6px;
+        }
+
+        .tab.active {
+            background: #007bff;
+            color: white;
+        }
+
+        #urlSection {
+            display: none;
+            margin-bottom: 20px;
+        }
+
+        #urlInput {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>🕵️ FactChecker AI</h1>
-        <p style="text-align: center; color: #666;">Upload a video or image to verify claims & check for AI generation.</p>
-        
-        <div class="upload-section" onclick="document.getElementById('mediaInput').click()">
-            <p>Click to select Video or Image (MP4, JPG, PNG)</p>
-            <input type="file" id="mediaInput" accept="video/*,image/*" style="display: none" onchange="updateFileName()">
+        <p style="text-align: center; color: #666;">Upload a video or image to verify claims & check for AI generation.
+        </p>
+
+        <div class="input-tabs">
+            <div id="tabFile" class="tab active" onclick="switchMode('file')">Upload File</div>
+            <div id="tabUrl" class="tab" onclick="switchMode('url')">Paste Link</div>
+        </div>
+
+        <div id="fileSection" class="upload-section" onclick="document.getElementById('mediaInput').click()">
+            <p>Click to select Video or Image</p>
+            <input type="file" id="mediaInput" accept="video/*,image/*" style="display: none"
+                onchange="updateFileName()">
             <p id="fileName" style="font-weight: bold; color: #007bff;"></p>
+        </div>
+
+        <div id="urlSection">
+            <input type="text" id="urlInput" placeholder="https://example.com/video.mp4 or image.jpg">
         </div>
 
         <button onclick="analyzeMedia()" id="submitBtn">Analyze Media</button>
@@ -59,29 +184,54 @@
             }
         }
 
+        let currentMode = 'file';
+
+        function switchMode(mode) {
+            currentMode = mode;
+            document.getElementById('fileSection').style.display = mode === 'file' ? 'block' : 'none';
+            document.getElementById('urlSection').style.display = mode === 'url' ? 'block' : 'none';
+            document.getElementById('tabFile').className = mode === 'file' ? 'tab active' : 'tab';
+            document.getElementById('tabUrl').className = mode === 'url' ? 'tab active' : 'tab';
+        }
+
         async function analyzeMedia() {
-            const input = document.getElementById('mediaInput');
-            if (input.files.length === 0) return alert("Please select a file first.");
+            const submitBtn = document.getElementById('submitBtn');
+            const loader = document.getElementById('loader');
+            const resultDiv = document.getElementById('result');
 
-            const formData = new FormData();
-            formData.append("file", input.files[0]);
+            let body;
+            let headers = {};
 
-            document.getElementById('loader').style.display = 'block';
-            document.getElementById('result').style.display = 'none';
-            document.getElementById('submitBtn').disabled = true;
+            if (currentMode === 'file') {
+                const fileInput = document.getElementById('mediaInput');
+                if (fileInput.files.length === 0) return alert("Please select a file.");
+                body = new FormData();
+                body.append("file", fileInput.files[0]);
+                // Note: Fetch sets correct Content-Type for FormData automatically
+            } else {
+                const urlValue = document.getElementById('urlInput').value;
+                if (!urlValue) return alert("Please paste a URL.");
+                body = JSON.stringify({ media_url: urlValue });
+                headers = { 'Content-Type': 'application/json' };
+            }
+
+            loader.style.display = 'block';
+            resultDiv.style.display = 'none';
+            submitBtn.disabled = true;
 
             try {
                 const response = await fetch('/analyze', {
                     method: 'POST',
-                    body: formData
+                    headers: headers,
+                    body: body
                 });
 
                 const data = await response.json();
-                
-                // Update UI
+                console.log("Server Response:", data);
+                // Update UI (Render Results)
                 document.getElementById('scoreValue').innerText = data.score;
                 document.getElementById('summaryText').innerText = data.analysis.summary;
-                
+
                 const claimsContainer = document.getElementById('claimsList');
                 claimsContainer.innerHTML = '';
 
@@ -108,4 +258,5 @@
         }
     </script>
 </body>
+
 </html>
