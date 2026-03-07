@@ -1,4 +1,5 @@
 import os
+import uuid
 import shutil
 import clickhouse_connect
 from dotenv import load_dotenv
@@ -11,11 +12,27 @@ from google import genai
 # Import our modules
 from agents.transcriber import AudioTranscriber
 from agents.claim_agent import claim_agent, FactCheckerDeps, analyze_media_integrity, extract_image_text, extract_video_visual_claims
-from agents.scorer import calculate_trust_score
+from agents.scorer import calculate_trust_score, generate_hex_metrics
 
 load_dotenv()
 
 app = FastAPI()
+
+def log_status(claim_id, status, transcript, details):
+    deps = FactCheckerDeps()
+    # Explicitly naming columns prevents "Unrecognized column" or "Offset" errors
+    query = """
+        INSERT INTO claim_history (claim_id, transcript, status, details) 
+        VALUES 
+    """
+    try:
+        deps.ch_client.insert(
+            'claim_history', 
+            [[claim_id, transcript, status, details]], 
+            column_names=['claim_id', 'transcript', 'status', 'details']
+        )
+    except Exception as e:
+        print(f"❌ DB Insert Error: {e}")
 
 # --- ClickHouse Setup Logic ---
 
@@ -137,8 +154,20 @@ def init_clickhouse():
                     print(f"✅ ClickHouse populated with {len(data_to_insert)} embedded pages.")
             else:
                 print("⚠️ Warning: data/sg_policies.pdf not found.")
+        
         else:
             print(f"✅ ClickHouse already contains {count} records. Skipping.")
+
+        # 5. Create Claim History Table for Analytics
+        client.command('''
+            CREATE TABLE IF NOT EXISTS claim_history (
+                claim_id String,
+                transcript String,
+                status Enum('Unverified' = 1, 'Processing' = 2, 'Verified' = 3, 'Debunked' = 4),
+                event_time DateTime DEFAULT now(),
+                details String
+            ) ENGINE = MergeTree() ORDER BY event_time
+        ''')
 
     except Exception as e:
         print(f"❌ ClickHouse Init Error: {e}")
@@ -206,10 +235,21 @@ async def analyze_media(file: UploadFile = File(...)):
 
         # 5. Score
         score = calculate_trust_score(analysis_data, media_analysis)
+        metrics = generate_hex_metrics(analysis_data, media_analysis)
+
+        # Determine status based on score
+        status = "Unverified"
+        if score >= 70: status = "Verified"
+        elif score <= 30: status = "Debunked"
+
+        # 6. Save to ClickHouse
+        claim_id = str(uuid.uuid4())
+        log_status(claim_id, status, transcript, analysis_data.summary)
 
         return {
             "transcript": transcript,
             "score": score,
+            "metrics": metrics,
             "analysis": analysis_data.model_dump(),
             "video_analysis": media_analysis.model_dump()
         }

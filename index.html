@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FactChecker AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -133,6 +134,13 @@
             border-radius: 6px;
             box-sizing: border-box;
         }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+            margin: 20px 0;
+        }
     </style>
 </head>
 
@@ -169,6 +177,11 @@
                 <div>Trust Score</div>
                 <div class="score-val" id="scoreValue">0/100</div>
             </div>
+
+            <div class="chart-container">
+                <canvas id="radarChart"></canvas>
+            </div>
+
             <h3>Summary</h3>
             <p id="summaryText"></p>
             <h3>Claims Analysis</h3>
@@ -185,6 +198,7 @@
         }
 
         let currentMode = 'file';
+        let radarChart = null;
 
         function switchMode(mode) {
             currentMode = mode;
@@ -232,6 +246,8 @@
                 document.getElementById('scoreValue').innerText = data.score;
                 document.getElementById('summaryText').innerText = data.analysis.summary;
 
+                renderChart(data.metrics);
+
                 const claimsContainer = document.getElementById('claimsList');
                 claimsContainer.innerHTML = '';
 
@@ -255,6 +271,39 @@
                 document.getElementById('loader').style.display = 'none';
                 document.getElementById('submitBtn').disabled = false;
             }
+        }
+
+        function renderChart(metrics) {
+            const ctx = document.getElementById('radarChart').getContext('2d');
+            
+            if (radarChart) {
+                radarChart.destroy();
+            }
+
+            radarChart = new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: Object.keys(metrics),
+                    datasets: [{
+                        label: 'Trust Metrics',
+                        data: Object.values(metrics),
+                        backgroundColor: 'rgba(0, 123, 255, 0.2)',
+                        borderColor: 'rgba(0, 123, 255, 1)',
+                        borderWidth: 2,
+                        pointBackgroundColor: 'rgba(0, 123, 255, 1)'
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    scales: {
+                        r: {
+                            angleLines: { display: true },
+                            suggestedMin: 0,
+                            suggestedMax: 100
+                        }
+                    }
+                }
+            });
         }
     </script>
 </body>
