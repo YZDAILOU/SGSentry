@@ -1,44 +1,61 @@
 import os
-import httpx
+import time
+from google import genai
+from google.genai import types
 
 class AudioTranscriber:
     def __init__(self):
-        # Ensure HF_API_TOKEN and MERALION_API_URL are set in .env
-        self.api_token = os.getenv("HF_API_TOKEN")
-        self.api_url = os.getenv("MERALION_API_URL")
+        # Initialize the Gemini Client
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("Missing GOOGLE_API_KEY in environment variables.")
+        
+        self.client = genai.Client(api_key=api_key)
+        self.model_id = "gemini-2.5-flash"
 
     async def transcribe(self, audio_path: str) -> str:
         """
-        Transcribes audio using MERaLiON via Hugging Face Inference Endpoint.
+        Transcribes audio by uploading to Gemini File API and processing with Gemini 2.5 Flash.
         """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        if not self.api_token or not self.api_url:
-            raise ValueError("Missing HF_API_TOKEN or MERALION_API_URL in environment variables.")
+        print(f"Uploading {audio_path} to Gemini File API...")
 
-        print(f"Transcribing {audio_path} with MERaLiON...")
-        
-        headers = {
-            "Authorization": f"Bearer {self.api_token}",
-            "Content-Type": "application/octet-stream"
-        }
-        
-        async with httpx.AsyncClient() as client:
-            with open(audio_path, "rb") as f:
-                data = f.read()
+        try:
+            # 1. Upload the file to Google's File API
+            # Gemini requires audio to be uploaded before it can be processed
+            uploaded_file = self.client.files.upload(file=audio_path)
+
+            # 2. Wait for the file to be processed by Google (Status: ACTIVE)
+            # This is usually instant for small files, but good for safety
+            while uploaded_file.state.name == "PROCESSING":
+                print("Waiting for file to be processed...")
+                time.sleep(2)
+                uploaded_file = self.client.files.get(name=uploaded_file.name)
+
+            if uploaded_file.state.name == "FAILED":
+                raise ValueError(f"File processing failed: {uploaded_file.name}")
+
+            # 3. Generate Transcription
+            print(f"Transcribing {audio_path} with {self.model_id}...")
             
-            response = await client.post(self.api_url, headers=headers, data=data, timeout=300.0)
-            response.raise_for_status()
-            
-            result = response.json()
-            
-            # Handle list output (common in HF pipelines)
-            if isinstance(result, list) and len(result) > 0:
-                result = result[0]
-                
-            # Handle standard HF ASR output or AudioLLM generation
-            if isinstance(result, dict):
-                return result.get("text", result.get("generated_text", str(result)))
-            
-            return str(result)
+            # Using a specific prompt to ensure verbatim Singapore-aware transcription
+            prompt = (
+                "Transcribe this audio verbatim. Keep the original sentence structure "
+                "and accurately capture Singaporean English (Singlish) terms, accents, and acronyms."
+            )
+
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=[prompt, uploaded_file]
+            )
+
+            # 4. Clean up (Optional: Delete the file from Google's cloud after use)
+            self.client.files.delete(name=uploaded_file.name)
+
+            return response.text
+
+        except Exception as e:
+            print(f"❌ Gemini Transcription Error: {e}")
+            raise e
