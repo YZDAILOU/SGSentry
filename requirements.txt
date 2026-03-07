@@ -10,3 +10,5 @@ pypdf
 google-genai
 clickhouse-connect
 asyncio
+yt-dlp
+langfuse
