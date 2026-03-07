@@ -7,6 +7,8 @@ from pypdf import PdfReader
 from google import genai
 from dotenv import load_dotenv
 from pydantic_ai.models.google import GoogleModel
+import clickhouse_connect
+
 
 # Import Tools
 from tools.pagerank_api import PageRankAPI
@@ -44,22 +46,32 @@ class FactCheckerDeps:
     def __init__(self):
         self.pagerank = PageRankAPI()
         self.google = GoogleFactCheckAPI()
-        self.policy_text = self._load_policy_pdf()
+        # self.policy_text = self._load_policy_pdf()
+        self.client = genai.Client(api_key=api_key)
+        # Initialize ClickHouse connection
+        self.ch_client = clickhouse_connect.get_client(
+            host=os.getenv('CH_HOST', 'localhost'),
+            port=int(os.getenv('CH_PORT', 8443)),
+            username=os.getenv('CH_USER', 'default'),
+            password=os.getenv('CH_PASS', ''),
+            secure=True,
+            connect_timeout=30
+        )
 
-    def _load_policy_pdf(self) -> str:
-        """Simple RAG: Load text from data/sg_policies.pdf"""
-        path = os.path.join("data", "sg_policies.pdf")
-        if not os.path.exists(path):
-            return ""
-        try:
-            reader = PdfReader(path)
-            text = ""
-            for page in reader.pages:
-                text += page.extract_text() + "\n"
-            return text
-        except Exception as e:
-            print(f"Error reading PDF: {e}")
-            return ""
+    # def _load_policy_pdf(self) -> str:
+    #     """Simple RAG: Load text from data/sg_policies.pdf"""
+    #     path = os.path.join("data", "sg_policies.pdf")
+    #     if not os.path.exists(path):
+    #         return ""
+    #     try:
+    #         reader = PdfReader(path)
+    #         text = ""
+    #         for page in reader.pages:
+    #             text += page.extract_text() + "\n"
+    #         return text
+    #     except Exception as e:
+    #         print(f"Error reading PDF: {e}")
+    #         return ""
 
 # --- Agent Initialization ---
 
@@ -104,19 +116,39 @@ async def check_domain_authority(ctx: RunContext[FactCheckerDeps], domain: str) 
     return f"Domain: {domain}, PageRank: {data.get('page_rank_decimal')}, Rank: {data.get('rank')}"
 
 @claim_agent.tool
-async def consult_policies(ctx: RunContext[FactCheckerDeps], keyword: str) -> str:
-    """Search the local 'sg_policies.pdf' for keywords (e.g., 'CPF', 'Housing')."""
-    full_text = ctx.deps.policy_text
-    if not full_text:
-        return "No policy document available."
+async def consult_policies(ctx: RunContext[FactCheckerDeps], query: str) -> str:
+    """
+    Search across all Singapore government policy documents in ClickHouse 
+    to verify claims against official regulations.
+    """
+    # 1. Generate the embedding for the user's specific question
+    embedding_response = ctx.deps.client.models.embed_content(
+        model="gemini-embedding-001", # Must match what you used to populate ClickHouse
+        contents=query
+    )
+    query_vector = embedding_response.embeddings[0].values
+
+    # 2. Perform Vector Search in ClickHouse
+    # We use cosineDistance: smaller value = more similar
+    search_query = """
+        SELECT content, filename, cosineDistance(embedding, %(vec)s) AS score
+        FROM sg_policies
+        ORDER BY score ASC
+        LIMIT 5
+    """
     
-    lines = full_text.split('\n')
-    matches = [line for line in lines if keyword.lower() in line.lower()]
+    result = ctx.deps.ch_client.query(search_query, parameters={'vec': query_vector})
     
-    if not matches:
-        return "No relevant policy details found in document."
-    
-    return "\n".join(matches[:5])
+    if not result.result_rows:
+        return "No relevant policy information found in the database."
+
+    # 3. Format the results for the Agent
+    context_blocks = []
+    for row in result.result_rows:
+        content, source, score = row
+        context_blocks.append(f"Source: {source} (Similarity: {1-score:.2f})\nContent: {content}")
+
+    return "\n\n---\n\n".join(context_blocks)
 
 # --- Video Analysis Logic ---
 
@@ -141,7 +173,7 @@ async def analyze_media_integrity(media_path: str) -> VideoAnalysisResult:
         
     prompt = "Analyze this media (video or image) for signs of AI generation (deepfakes, manipulation), such as unnatural artifacts, lighting inconsistencies, or lip-sync errors. Return JSON."
     
-    # Note: Use 'gemini-2.5-flash' for better video analysis
+    # Note: Use 'gemini-2.5-pro' for better video analysis
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=[media_file, prompt],
