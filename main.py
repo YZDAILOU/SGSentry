@@ -1,4 +1,5 @@
 import os
+import uuid
 import shutil
 import clickhouse_connect
 from dotenv import load_dotenv
@@ -11,11 +12,27 @@ from google import genai
 # Import our modules
 from agents.transcriber import AudioTranscriber
 from agents.claim_agent import claim_agent, FactCheckerDeps, analyze_media_integrity, extract_image_text, extract_video_visual_claims
-from agents.scorer import calculate_trust_score
+from agents.scorer import calculate_trust_score, generate_hex_metrics
 
 load_dotenv()
 
 app = FastAPI()
+
+def log_status(claim_id, status, transcript, details):
+    deps = FactCheckerDeps()
+    # Explicitly naming columns prevents "Unrecognized column" or "Offset" errors
+    query = """
+        INSERT INTO claim_history (claim_id, transcript, status, details) 
+        VALUES 
+    """
+    try:
+        deps.ch_client.insert(
+            'claim_history', 
+            [[claim_id, transcript, status, details]], 
+            column_names=['claim_id', 'transcript', 'status', 'details']
+        )
+    except Exception as e:
+        print(f"❌ DB Insert Error: {e}")
 
 # --- ClickHouse Setup Logic ---
 

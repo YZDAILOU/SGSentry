@@ -232,6 +232,8 @@
                 document.getElementById('scoreValue').innerText = data.score;
                 document.getElementById('summaryText').innerText = data.analysis.summary;
 
+                renderChart(data.metrics);
+
                 const claimsContainer = document.getElementById('claimsList');
                 claimsContainer.innerHTML = '';
 
