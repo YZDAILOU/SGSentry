@@ -278,9 +278,9 @@ async def analyze_media(
         )
         analysis_data = result.output or AnalysisResult(summary="No claims found", claims=[], hallucination_risk="Low")
 
-        print("SUmmary from google facts: ", analysis_data.summary)
+        # print("SUmmary from google facts: ", analysis_data.claims)
         # 5. Score
-        score = calculate_trust_score(analysis_data, media_analysis)
+        score = await calculate_trust_score(analysis_data, media_analysis)
         metrics = generate_hex_metrics(analysis_data, media_analysis)
 
         # Determine status based on score
