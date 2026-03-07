@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FactChecker AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -133,6 +134,13 @@
             border-radius: 6px;
             box-sizing: border-box;
         }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+            margin: 20px 0;
+        }
     </style>
 </head>
 
@@ -169,6 +177,11 @@
                 <div>Trust Score</div>
                 <div class="score-val" id="scoreValue">0/100</div>
             </div>
+
+            <div class="chart-container">
+                <canvas id="radarChart"></canvas>
+            </div>
+
             <h3>Summary</h3>
             <p id="summaryText"></p>
             <h3>Claims Analysis</h3>
@@ -185,6 +198,7 @@
         }
 
         let currentMode = 'file';
+        let radarChart = null;
 
         function switchMode(mode) {
             currentMode = mode;
@@ -199,20 +213,15 @@
             const loader = document.getElementById('loader');
             const resultDiv = document.getElementById('result');
 
-            let body;
-            let headers = {};
-
+            let body = new FormData();
             if (currentMode === 'file') {
                 const fileInput = document.getElementById('mediaInput');
-                if (fileInput.files.length === 0) return alert("Please select a file.");
-                body = new FormData();
+                // if (fileInput.files.length === 0) return alert("Please select a file.");
                 body.append("file", fileInput.files[0]);
-                // Note: Fetch sets correct Content-Type for FormData automatically
             } else {
                 const urlValue = document.getElementById('urlInput').value;
-                if (!urlValue) return alert("Please paste a URL.");
-                body = JSON.stringify({ media_url: urlValue });
-                headers = { 'Content-Type': 'application/json' };
+                // Stringify the JSON for the Form field
+                body.append("request_data", JSON.stringify({ media_url: urlValue }));
             }
 
             loader.style.display = 'block';
@@ -222,33 +231,46 @@
             try {
                 const response = await fetch('/analyze', {
                     method: 'POST',
-                    headers: headers,
                     body: body
                 });
 
                 const data = await response.json();
                 console.log("Server Response:", data);
+
+                if (data.error) {
+                    alert("Analysis failed: " + data.error);
+                    return;
+                }
+
                 // Update UI (Render Results)
                 document.getElementById('scoreValue').innerText = data.score;
-                document.getElementById('summaryText').innerText = data.analysis.summary;
+                document.getElementById('summaryText').innerText = data.analysis?.summary || "No summary available.";
+
+                if (data.metrics) {
+                    renderChart(data.metrics);
+                }
 
                 renderChart(data.metrics);
 
                 const claimsContainer = document.getElementById('claimsList');
                 claimsContainer.innerHTML = '';
 
-                data.analysis.claims.forEach(claim => {
-                    let statusClass = 'neutral';
-                    // Simple heuristic for color coding
-                    if (claim.verification.some(v => v.status.includes('True') || v.status.includes('Verified'))) statusClass = 'verified';
-                    if (claim.verification.some(v => v.status.includes('False') || v.status.includes('Debunked'))) statusClass = 'debunked';
+                if (data.analysis && data.analysis.claims) {
+                    data.analysis.claims.forEach(claim => {
+                        let statusClass = 'neutral';
+                        // Simple heuristic for color coding
+                        if (claim.verification.some(v => v.status.includes('True') || v.status.includes('Verified'))) statusClass = 'verified';
+                        if (claim.verification.some(v => v.status.includes('False') || v.status.includes('Debunked'))) statusClass = 'debunked';
 
-                    const div = document.createElement('div');
-                    div.className = `claim-card ${statusClass}`;
-                    div.innerHTML = `<strong>Claim:</strong> ${claim.text}<br>
-                                     <small>Status: ${claim.verification.length > 0 ? claim.verification[0].details : 'Unverified'}</small>`;
-                    claimsContainer.appendChild(div);
-                });
+                        const div = document.createElement('div');
+                        div.className = `claim-card ${statusClass}`;
+                        div.innerHTML = `<strong>Claim:</strong> ${claim.text}<br>
+                                         <small>Status: ${claim.verification.length > 0 ? claim.verification[0].details : 'Unverified'}</small>`;
+                        claimsContainer.appendChild(div);
+                    });
+                } else {
+                    claimsContainer.innerHTML = '<p>No claims detected.</p>';
+                }
 
                 document.getElementById('result').style.display = 'block';
             } catch (error) {
@@ -257,6 +279,39 @@
                 document.getElementById('loader').style.display = 'none';
                 document.getElementById('submitBtn').disabled = false;
             }
+        }
+
+        function renderChart(metrics) {
+            const ctx = document.getElementById('radarChart').getContext('2d');
+            
+            if (radarChart) {
+                radarChart.destroy();
+            }
+
+            radarChart = new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: Object.keys(metrics),
+                    datasets: [{
+                        label: 'Trust Metrics',
+                        data: Object.values(metrics),
+                        backgroundColor: 'rgba(0, 123, 255, 0.2)',
+                        borderColor: 'rgba(0, 123, 255, 1)',
+                        borderWidth: 2,
+                        pointBackgroundColor: 'rgba(0, 123, 255, 1)'
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    scales: {
+                        r: {
+                            angleLines: { display: true },
+                            suggestedMin: 0,
+                            suggestedMax: 100
+                        }
+                    }
+                }
+            });
         }
     </script>
 </body>
