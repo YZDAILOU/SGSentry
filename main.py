@@ -10,7 +10,7 @@ from google import genai
 
 # Import our modules
 from agents.transcriber import AudioTranscriber
-from agents.claim_agent import claim_agent, FactCheckerDeps, analyze_media_integrity, extract_image_text
+from agents.claim_agent import claim_agent, FactCheckerDeps, analyze_media_integrity, extract_image_text, extract_video_visual_claims
 from agents.scorer import calculate_trust_score
 
 load_dotenv()
@@ -180,11 +180,16 @@ async def analyze_media(file: UploadFile = File(...)):
         content_type = file.content_type or ""
         transcript = ""
         
+        # 2. Extract Text (Transcript or OCR)
         if "video" in content_type:
-            # Use Whisper for video audio
-            transcriber = AudioTranscriber() # this AudioTranscriber is failing
+            transcriber = AudioTranscriber()
             transcript = await transcriber.transcribe(file_path)
-            print("transcript check for video: ", transcript)
+            
+            # NEW LOGIC: If the transcript is empty or says 'only music'
+            if not transcript.strip() or "no spoken words" in transcript.lower():
+                print("🔈 Audio is silent/music. Switching to Visual Extraction...")
+                transcript = await extract_video_visual_claims(file_path)
+
         elif "image" in content_type:
             transcript = await extract_image_text(file_path)
 
@@ -200,7 +205,7 @@ async def analyze_media(file: UploadFile = File(...)):
         analysis_data = result.output
 
         # 5. Score
-        score = calculate_trust_score(analysis_data)
+        score = calculate_trust_score(analysis_data, media_analysis)
 
         return {
             "transcript": transcript,
