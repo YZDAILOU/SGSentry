@@ -213,15 +213,20 @@
             const loader = document.getElementById('loader');
             const resultDiv = document.getElementById('result');
 
-            let body = new FormData();
+            let body;
+            let headers = {};
+
             if (currentMode === 'file') {
                 const fileInput = document.getElementById('mediaInput');
-                // if (fileInput.files.length === 0) return alert("Please select a file.");
+                if (fileInput.files.length === 0) return alert("Please select a file.");
+                body = new FormData();
                 body.append("file", fileInput.files[0]);
+                // Note: Fetch sets correct Content-Type for FormData automatically
             } else {
                 const urlValue = document.getElementById('urlInput').value;
-                // Stringify the JSON for the Form field
-                body.append("request_data", JSON.stringify({ media_url: urlValue }));
+                if (!urlValue) return alert("Please paste a URL.");
+                body = JSON.stringify({ media_url: urlValue });
+                headers = { 'Content-Type': 'application/json' };
             }
 
             loader.style.display = 'block';
@@ -231,46 +236,35 @@
             try {
                 const response = await fetch('/analyze', {
                     method: 'POST',
+                    headers: headers,
                     body: body
                 });
 
                 const data = await response.json();
                 console.log("Server Response:", data);
-
-                if (data.error) {
-                    alert("Analysis failed: " + data.error);
-                    return;
-                }
-
                 // Update UI (Render Results)
                 document.getElementById('scoreValue').innerText = data.score;
-                document.getElementById('summaryText').innerText = data.analysis?.summary || "No summary available.";
+                document.getElementById('summaryText').innerText = data.analysis.summary;
 
-                if (data.metrics) {
-                    renderChart(data.metrics);
-                }
+                renderChart(data.metrics);
 
                 renderChart(data.metrics);
 
                 const claimsContainer = document.getElementById('claimsList');
                 claimsContainer.innerHTML = '';
 
-                if (data.analysis && data.analysis.claims) {
-                    data.analysis.claims.forEach(claim => {
-                        let statusClass = 'neutral';
-                        // Simple heuristic for color coding
-                        if (claim.verification.some(v => v.status.includes('True') || v.status.includes('Verified'))) statusClass = 'verified';
-                        if (claim.verification.some(v => v.status.includes('False') || v.status.includes('Debunked'))) statusClass = 'debunked';
+                data.analysis.claims.forEach(claim => {
+                    let statusClass = 'neutral';
+                    // Simple heuristic for color coding
+                    if (claim.verification.some(v => v.status.includes('True') || v.status.includes('Verified'))) statusClass = 'verified';
+                    if (claim.verification.some(v => v.status.includes('False') || v.status.includes('Debunked'))) statusClass = 'debunked';
 
-                        const div = document.createElement('div');
-                        div.className = `claim-card ${statusClass}`;
-                        div.innerHTML = `<strong>Claim:</strong> ${claim.text}<br>
-                                         <small>Status: ${claim.verification.length > 0 ? claim.verification[0].details : 'Unverified'}</small>`;
-                        claimsContainer.appendChild(div);
-                    });
-                } else {
-                    claimsContainer.innerHTML = '<p>No claims detected.</p>';
-                }
+                    const div = document.createElement('div');
+                    div.className = `claim-card ${statusClass}`;
+                    div.innerHTML = `<strong>Claim:</strong> ${claim.text}<br>
+                                     <small>Status: ${claim.verification.length > 0 ? claim.verification[0].details : 'Unverified'}</small>`;
+                    claimsContainer.appendChild(div);
+                });
 
                 document.getElementById('result').style.display = 'block';
             } catch (error) {
