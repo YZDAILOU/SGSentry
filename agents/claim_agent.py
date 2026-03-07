@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from pydantic_ai.models.google import GoogleModel
 import clickhouse_connect
 from openai import OpenAI
+from langfuse import Langfuse
 
 # Import Tools
 from tools.pagerank_api import PageRankAPI
@@ -17,6 +18,7 @@ from tools.google_fact import GoogleFactCheckAPI
 # 1. Load environment variables at the very top
 load_dotenv()
 api_key = os.getenv("GOOGLE_API_KEY")
+langfuse = Langfuse()
 
 # --- Data Models ---
 class VerificationData(BaseModel):
@@ -82,39 +84,35 @@ model_instance = GoogleModel('gemini-2.5-flash')
 claim_agent = Agent(
     model_instance,
     deps_type=FactCheckerDeps,
-    output_type=AnalysisResult,
-    system_prompt=(
-        "You are a Fact Checking Bot for Singapore context. Your task is to verify the integrity of claims extracted from media content. "
-        "1. Analyze the transcript and extract key claims. "
-        "2. Use 'check_google_facts' and 'consult_policies' for raw evidence. "
-        "3. CRITICAL: Use the 'logic_auditor' tool to cross-examine evidence. " # New instruction
-        "If Google Facts and SG Policies seem to conflict, ask the logic_auditor "
-        "to perform a 'blind' logical analysis of the claim."
-        "4. Return a structured report."
-    )
+    output_type=AnalysisResult
 )
 
 # --- Agent Tools ---
 # OpenAI GPT-4o is used here for its advanced reasoning capabilities, which are crucial for the logic auditing step.
 @claim_agent.tool
-async def logic_auditor(ctx: RunContext[FactCheckerDeps], claim: str, evidence: str) -> str:
+async def logic_auditor(ctx: RunContext[FactCheckerDeps], claim: str, google_evidence: str, policy_evidence: str) -> str:
     """
     Advanced Logic Auditor: Use this to find logical fallacies, 
-    hidden biases, or direct contradictions between a claim and the evidence found.
+    hidden biases, or direct contradictions between a claim and the evidence found (Google vs Policy).
     Powered by GPT-4o for high-precision reasoning.
     """
-    prompt = f"""
-    You are a Senior Forensic Analyst. 
-    Analyze the following claim against the provided evidence.
-    
-    CLAIM: {claim}
-    EVIDENCE: {evidence}
-    
-    Identify:
-    1. Direct Contradictions: (Yes/No)
-    2. Logical Fallacies: (e.g. Strawman, Cherry-picking, Appeal to Emotion)
-    3. Final Reasoning: A 2-sentence verdict on the claim's integrity.
-    """
+    try:
+        prompt_tmpl = langfuse.get_prompt("logic_cross_examiner")
+        prompt = prompt_tmpl.compile(
+            claim=claim, 
+            google_evidence=google_evidence, 
+            policy_evidence=policy_evidence
+        )
+    except Exception as e:
+        print(f"⚠️ Langfuse Prompt Error: {e}")
+        prompt = f"""
+        You are a logic auditor. You are presented with a claim: '{claim}'.
+        Source A (Google): {google_evidence}
+        Source B (SG Policy): {policy_evidence}
+        Perform a 'Blind Logical Audit':
+        Identify any 'False Dilemma' or 'Strawman' fallacies.
+        Resolve the conflict by identifying which source has the higher 'domain specificity'.
+        """
     
     # Using GPT-4o (or gpt-5.2 if you have the 2026 upgrade)
     response = ctx.deps.openai_client.chat.completions.create(
@@ -207,7 +205,16 @@ async def analyze_media_integrity(media_path: str) -> VideoAnalysisResult:
     if media_file.state.name == "FAILED":
         raise RuntimeError("Media processing failed.")
         
-    prompt = "Analyze this media (video or image) for signs of AI generation (deepfakes, manipulation), such as unnatural artifacts, lighting inconsistencies, or lip-sync errors. Return JSON."
+    media_type = "video" if media_path.endswith(('.mp4', '.mov', '.avi')) else "image"
+    
+    try:
+        prompt_tmpl = langfuse.get_prompt("media_integrity_analyst")
+        prompt = prompt_tmpl.compile(media_type=media_type)
+    except Exception as e:
+        print(f"⚠️ Langfuse Prompt Error: {e}")
+        prompt = f"You are an AI forensics expert. Analyze this {media_type} for signs of manipulation. " \
+                 "Check for unnatural skin textures, flickering, or temporal inconsistencies. " \
+                 "Return a structured assessment of the likelihood that this media is synthetic."
     
     # Note: Use 'gemini-2.5-pro' for better video analysis
     response = client.models.generate_content(
@@ -247,11 +254,15 @@ async def extract_video_visual_claims(video_path: str) -> str:
         time.sleep(2)
         media_file = client.files.get(name=media_file.name)
     
-    prompt = (
-        "This video has no spoken dialogue or only contains music. "
-        "Analyze the visuals: extract all text overlays, captions, "
-        "and describe the key factual events occurring in the scene."
-    )
+    try:
+        prompt_tmpl = langfuse.get_prompt("visual_claim_extractor")
+        prompt = prompt_tmpl.compile(video_frames_description="the video content")
+    except Exception as e:
+        print(f"⚠️ Langfuse Prompt Error: {e}")
+        prompt = (
+            "The audio for this video is unavailable or contains only music. Your task is to 'watch' the visuals. "
+            "Extract all text overlays (OCR). Identify factual assertions made via captions or infographics."
+        )
     
     response = client.models.generate_content(
         model="gemini-2.5-flash",
