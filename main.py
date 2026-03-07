@@ -46,8 +46,9 @@ async def analyze_media(file: UploadFile = File(...)):
 
         if "video" in content_type:
             # Use Whisper for video audio
-            transcriber = AudioTranscriber()
+            transcriber = AudioTranscriber() # this AudioTranscriber is failing
             transcript = await transcriber.transcribe(file_path)
+            print("transcript check for video: ", transcript)
         elif "image" in content_type:
             # Use Gemini for Image OCR/Description
             transcript = await extract_image_text(file_path)
