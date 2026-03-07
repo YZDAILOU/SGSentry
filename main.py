@@ -1,24 +1,43 @@
 import os
 import uuid
+import json
 import shutil
 import clickhouse_connect
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
+from pydantic import BaseModel
 from pypdf import PdfReader  # Ensure you have 'pip install pypdf'
 from google import genai
 import yt_dlp
-import asyncio
 
 # Import our modules
 from agents.transcriber import AudioTranscriber
-from agents.claim_agent import claim_agent, FactCheckerDeps, analyze_media_integrity, extract_image_text, extract_video_visual_claims
+from agents.claim_agent import claim_agent, FactCheckerDeps, analyze_media_integrity, extract_image_text, extract_video_visual_claims, AnalysisResult
 from agents.scorer import calculate_trust_score, generate_hex_metrics
 
 load_dotenv()
 
 app = FastAPI()
+
+class UrlRequest(BaseModel):
+    media_url: str
+
+async def download_video_from_url(url: str) -> str:
+    """Downloads social media videos to a temporary file for visual analysis."""
+    temp_filename = f"dl_{uuid.uuid4()}.mp4"
+    ydl_opts = {
+        # Ensuring we get a format Gemini likes (mp4)
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': temp_filename,
+        'quiet': True,
+        'no_warnings': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
+    return temp_filename
 
 def log_status(claim_id, status, transcript, details):
     deps = FactCheckerDeps()
@@ -198,27 +217,39 @@ async def read_root():
     return "<h1>Frontend not found. Please create index.html</h1>"
 
 @app.post("/analyze")
-async def analyze_media(file: UploadFile = File(...)):
-    """Receives video/image, extracts text, checks claims, and analyzes for deepfakes."""
-    file_path = f"temp_{file.filename}"
-
+async def analyze_media(
+    file: Optional[UploadFile] = File(None), 
+    request_data: Optional[str] = Form(None)
+):
+    """Receives video/image or URL, extracts text, checks claims, and analyzes for deepfakes."""
+    file_path = ""
+    content_type = ""
+    
     try:
-        # 1. Save Uploaded File
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # --- Handle File vs URL ---
+        if file:
+            file_path = f"temp_{file.filename}"
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            content_type = file.content_type or ""
+        elif request_data:
+            data = json.loads(request_data)
+            file_path = await download_video_from_url(data['media_url'])
+            content_type = "video/mp4" # Assume video for social links
+
+        if not file_path or not os.path.exists(file_path):
+            return {"error": "Failed to retrieve media content"}
 
         # 2. Extract Text (Transcript or OCR)
-        content_type = file.content_type or ""
         transcript = ""
-
-        # 2. Extract Text (Transcript or OCR)
         if "video" in content_type:
             transcriber = AudioTranscriber()
             transcript = await transcriber.transcribe(file_path)
-
-            # NEW LOGIC: If the transcript is empty or says 'only music'
-            if not transcript.strip() or "no spoken words" in transcript.lower():
-                print("🔈 Audio is silent/music. Switching to Visual Extraction...")
+            
+            # TRIGGER VISUAL ANALYSIS: If transcript is empty or music-only
+            if not transcript.strip() or "music" in transcript.lower():
+                print("Detected music-only audio. Switching to visual analysis...")
+                # Use your new fallback tool
                 transcript = await extract_video_visual_claims(file_path)
 
         elif "image" in content_type:
@@ -232,9 +263,7 @@ async def analyze_media(file: UploadFile = File(...)):
             f"Analyze this transcript: {transcript}",
             deps=deps
         )
-        # Use gather to wait for both to finish at once
-        media_analysis, agent_result = await asyncio.gather(media_analysis, result)
-        analysis_data = agent_result.output or AnalysisResult(summary="No claims found", claims=[], hallucination_risk="Low")
+        analysis_data = result.output or AnalysisResult(summary="No claims found", claims=[], hallucination_risk="Low")
 
         # 5. Score
         score = calculate_trust_score(analysis_data, media_analysis)
